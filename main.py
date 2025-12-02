@@ -11,30 +11,23 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    CallbackQueryHandler, # Додали для обробки натискання кнопок
+    CallbackQueryHandler,
 )
 
-# --- НАЛАШТУВАННЯ ---
-# Вставте сюди ваші НОВІ ключі
 GOOGLE_API_KEY = 'ключ' 
 TELEGRAM_TOKEN = 'ключ'
 
-# Ініціалізація клієнта Google
 gmaps = googlemaps.Client(key=GOOGLE_API_KEY)
 
-# Словник для зберігання маршрутів: {user_id: ["Адреса 1", "Адреса 2"]}
 user_routes = {}
 
-# Словник для зберігання режиму пересування: {user_id: "driving"}
 user_modes = {}
 
-# Налаштування логування
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# --- ЛОГІКА GOOGLE MAPS ---
 def create_smart_route_file(user_id, points, travel_mode="driving"):
     """
     travel_mode може бути: 'driving', 'walking', 'bicycling'
@@ -42,10 +35,9 @@ def create_smart_route_file(user_id, points, travel_mode="driving"):
     if len(points) < 2:
         return None, "Мало точок для маршруту! Потрібен хоча б Склад і 1 Клієнт."
 
-    start_address = points[0]      # Перша точка - склад
-    delivery_addresses = points[1:] # Решта - клієнти
+    start_address = points[0]      
+    delivery_addresses = points[1:]
 
-    # Переклад режиму для красивого виводу
     mode_names = {"driving": "🚗 Авто", "walking": "🚶 Пішки", "bicycling": "🚲 Велосипед"}
     mode_ukr = mode_names.get(travel_mode, travel_mode)
 
@@ -54,13 +46,12 @@ def create_smart_route_file(user_id, points, travel_mode="driving"):
     try:
         now = datetime.now()
         
-        # Запит до Google API
         directions_result = gmaps.directions(
             origin=start_address,
-            destination=start_address, # Кільцевий маршрут
+            destination=start_address, 
             waypoints=delivery_addresses,
-            optimize_waypoints=True,   # Оптимізація порядку точок
-            mode=travel_mode,          # <--- ТУТ МИ ПЕРЕДАЄМО ОБРАНИЙ РЕЖИМ
+            optimize_waypoints=True,   
+            mode=travel_mode,          
             departure_time=now
         )
     except Exception as e:
@@ -71,7 +62,6 @@ def create_smart_route_file(user_id, points, travel_mode="driving"):
 
     route = directions_result[0]
     
-    # Статистика
     total_distance = 0
     total_seconds = 0
     for leg in route['legs']:
@@ -88,24 +78,20 @@ def create_smart_route_file(user_id, points, travel_mode="driving"):
         f"⏱️ Час у дорозі: {int(total_min)} хв"
     )
 
-    # Візуалізація
     start_lat = route['legs'][0]['start_location']['lat']
     start_lng = route['legs'][0]['start_location']['lng']
     
     m = folium.Map(location=[start_lat, start_lng], zoom_start=13)
 
-    # Малювання лінії
     decoded_points = polyline.decode(route['overview_polyline']['points'])
     folium.PolyLine(decoded_points, color="blue", weight=5, opacity=0.7).add_to(m)
 
-    # Маркер Складу
     folium.Marker(
         [start_lat, start_lng],
         popup=f"🏢 СКЛАД<br>{start_address}",
         icon=folium.Icon(color='black', icon='home')
     ).add_to(m)
     
-    # Маркери клієнтів
     for i, leg in enumerate(route['legs']):
         if i == len(route['legs']) - 1: break 
             
@@ -125,12 +111,11 @@ def create_smart_route_file(user_id, points, travel_mode="driving"):
     return filename, stats_text
 
 
-# --- TELEGRAM HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_routes[user_id] = []
-    user_modes[user_id] = "driving" # За замовчуванням авто
+    user_modes[user_id] = "driving" 
     
     await update.message.reply_text(
         "🚛 <b>Вітаю в Логістичному Боті!</b>\n\n"
@@ -160,7 +145,6 @@ async def add_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Вкажіть адресу! Наприклад: <code>/add Kyiv, Khreshchatyk 1</code>", parse_mode=ParseMode.HTML)
         return
 
-    # Захист від дублікатів (простий)
     if user_routes[user_id] and user_routes[user_id][-1] == address:
         return
 
@@ -170,9 +154,7 @@ async def add_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(f"Додано: <b>{role}</b>\n📍 {address}", parse_mode=ParseMode.HTML)
 
-# --- НОВА ЛОГІКА ДЛЯ ВИБОРУ РЕЖИМУ ---
 async def choose_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Створюємо кнопки
     keyboard = [
         [InlineKeyboardButton("Автомобіль", callback_data='mode_driving')],
         [InlineKeyboardButton("Пішки", callback_data='mode_walking')],
@@ -185,22 +167,18 @@ async def choose_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # Обов'язково відповідаємо серверу, щоб кнопка перестала "крутитися"
-
-    # Отримуємо дані з кнопки (наприклад, "mode_walking")
+    await query.answer() 
     data = query.data
     
     if data.startswith("mode_"):
-        new_mode = data.replace("mode_", "") # Отримуємо чистий режим ("walking")
+        new_mode = data.replace("mode_", "") 
         user_modes[query.from_user.id] = new_mode
         
         mode_names = {"driving": "🚗 Автомобіль", "walking": "🚶 Пішки", "bicycling": "🚲 Велосипед"}
         nice_name = mode_names.get(new_mode, new_mode)
         
-        # Редагуємо повідомлення, прибираючи кнопки і показуючи результат
         await query.edit_message_text(text=f"✅ Режим змінено на: <b>{nice_name}</b>", parse_mode=ParseMode.HTML)
 
-# -------------------------------------
 
 async def list_points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -232,7 +210,6 @@ async def delete_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def finish_route(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     points = user_routes.get(user_id, [])
-    # Отримуємо режим користувача (або driving, якщо немає)
     mode = user_modes.get(user_id, "driving")
     
     if len(points) < 2:
@@ -241,7 +218,6 @@ async def finish_route(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"⏳ Оптимізую маршрут ({mode})...")
 
-    # Передаємо режим у функцію
     filename, stats = create_smart_route_file(user_id, points, travel_mode=mode)
 
     if filename:
@@ -266,10 +242,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("add", add_point))
     app.add_handler(CommandHandler("list", list_points))
     app.add_handler(CommandHandler("del", delete_point))
-    app.add_handler(CommandHandler("mode", choose_mode)) # Нова команда
+    app.add_handler(CommandHandler("mode", choose_mode)) 
     app.add_handler(CommandHandler("finish", finish_route))
     
-    # Обробник натискання кнопок
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("🤖 Бот запущено...")
